@@ -1,0 +1,27 @@
+# Stage 10 CODEX-036/038: Dependabot keeps SHA-pinned actions and Python
+# dependencies fresh.  Weekly cadence is enough for a beta library; we'll
+# tighten to daily after launch.
+
+version: 2
+updates:
+  - package-ecosystem: pip
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      dev-dependencies:
+        patterns:
+          - "ruff"
+          - "mypy"
+          - "pytest*"
+          - "hypothesis"
+          - "bandit"
+          - "tox"
+          - "matplotlib"
+
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5

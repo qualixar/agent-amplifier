@@ -1,0 +1,123 @@
+name: ci
+
+# F-04.11 / NOTE-PHASE-0-C: 12-cell matrix [3 OS x 4 Python].
+# Stage 10 hardening (CODEX-004/005/006/007/020/036/037/038):
+#   * Top-level minimum permissions (CODEX-020)
+#   * Concurrency cancellation (CODEX-037)
+#   * SHA-pinned actions (CODEX-038)
+#   * Coverage gate at 100% (CODEX-005)
+#   * Bandit + pip-audit security gates (CODEX-007)
+#   * CLI smoke uses ``python -m agent_amplifier`` not ``.cli`` (CODEX-006)
+#   * Perf job is gating, NOT continue-on-error (CODEX-004)
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# CODEX-020: minimum token permissions.  Release / publish workflows
+# explicitly elevate; CI does not need write.
+permissions:
+  contents: read
+
+# CODEX-037: cancel in-progress runs when a new commit lands on the same
+# ref so rapid pushes do not waste runner minutes.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        python: ["3.11", "3.12", "3.13", "3.14"]
+
+    steps:
+      # CODEX-038: SHA-pinned actions.  Refresh via Dependabot.
+      - name: Checkout
+        uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11  # v4.1.1
+      - name: Set up Python ${{ matrix.python }}
+        uses: actions/setup-python@0a5c61591373683505ea898e09a3ea4f39ef2b9c  # v5.0.0
+        with:
+          python-version: ${{ matrix.python }}
+
+      - name: Install dev dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev]"
+
+      - name: Lint (ruff)
+        run: python -m ruff check src/agent_amplifier tests
+
+      - name: Type-check (mypy --strict)
+        run: python -m mypy src/agent_amplifier --strict
+
+      - name: Pytest (default suite, 100% coverage gate)
+        run: |
+          python -m pytest tests/ \
+            --cov=src/agent_amplifier \
+            --cov-branch \
+            --cov-fail-under=100 \
+            --cov-report=term-missing \
+            -q
+
+      - name: Pytest (random seed 1)
+        run: python -m pytest tests/ --randomly-seed=42 -q
+
+      - name: Pytest (random seed 2)
+        run: python -m pytest tests/ --randomly-seed=99999 -q
+
+      - name: CLI smoke tests
+        shell: bash
+        run: |
+          python -c "from agent_amplifier import AgentAmplifier, AsyncAgentAmplifier, AdapterBase; print('public API ok')"
+          python -m agent_amplifier --version
+          python -m agent_amplifier --help
+          python -m agent_amplifier doctor
+
+      - name: Quickstart example smoke
+        run: python examples/quickstart_demo.py
+
+  security:
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11  # v4.1.1
+      - uses: actions/setup-python@0a5c61591373683505ea898e09a3ea4f39ef2b9c  # v5.0.0
+        with:
+          python-version: "3.13"
+      - name: Install dev + audit tools
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev]"
+          python -m pip install pip-audit
+      - name: Bandit (high severity gate)
+        run: python -m bandit -r src/agent_amplifier -ll
+      - name: pip-audit (dependency CVE gate)
+        run: python -m pip_audit --strict --ignore-vuln GHSA-58qw-9mgm-455v
+
+  perf:
+    runs-on: ${{ matrix.os }}
+    needs: test
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        python: ["3.13"]
+    steps:
+      - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11  # v4.1.1
+      - uses: actions/setup-python@0a5c61591373683505ea898e09a3ea4f39ef2b9c  # v5.0.0
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev]"
+      # CODEX-004: perf job is GATING.  Removed continue-on-error and
+      # ``|| true`` so a P99 regression fails the workflow.
+      - name: Perf-marked tests
+        run: python -m pytest tests/perf -m perf -q

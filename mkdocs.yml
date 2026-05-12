@@ -1,0 +1,83 @@
+site_name: Agent Amplifier
+site_url: https://qualixar.com/agent-amplifier
+site_description: Runtime amplification for AI coding agents. Same model, higher effort, verified.
+site_author: Varun Pratap Bhardwaj
+copyright: >
+  Copyright 2026 Qualixar — AGPL-3.0-or-later License.
+  <a href="https://x.com/varunPbhardwaj">@varunPbhardwaj</a> |
+  <a href="https://qualixar.com">qualixar.com</a>
+
+repo_name: qualixar/agent-amplifier
+repo_url: https://github.com/qualixar/agent-amplifier
+
+theme:
+  name: material
+  palette:
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: deep purple
+      accent: amber
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: deep purple
+      accent: amber
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+  features:
+    - navigation.instant
+    - navigation.tabs
+    - navigation.sections
+    - navigation.top
+    - content.code.copy
+    - content.code.annotate
+    - search.suggest
+    - search.highlight
+  icon:
+    repo: fontawesome/brands/github
+
+plugins:
+  - search
+
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.snippets
+  - tables
+  - attr_list
+  - md_in_html
+  - toc:
+      permalink: true
+
+nav:
+  - Home: index.md
+  - Getting Started: getting-started.md
+  - Architecture: architecture.md
+  - Features: features.md
+  - Adapters: adapters.md
+  - SLM Composition: composition.md
+  - FAQ: why-not-per-tool.md
+  - API Reference: api-reference.md
+  - Changelog: changelog.md
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/qualixar/agent-amplifier
+    - icon: fontawesome/brands/x-twitter
+      link: https://x.com/varunPbhardwaj
+    - icon: fontawesome/brands/python
+      link: https://pypi.org/project/agent-amplifier/

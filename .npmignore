@@ -1,0 +1,14 @@
+# npm package is a name reservation only.
+# The real package is on PyPI: pip install agent-amplifier
+src/
+tests/
+docs/
+.backup/
+.github/
+.venv/
+*.py
+*.toml
+*.cfg
+mkdocs.yml
+CONTRIBUTING.md
+CLAUDE.md
