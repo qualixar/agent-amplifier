@@ -1,0 +1,37 @@
+# Qualixar dashboard theme — Agent Amplifier
+#
+# Light mode is the default rendered when the user's browser is in light mode
+# (or has no preference). The [theme.dark] block overrides specific tokens
+# when the browser reports prefers-color-scheme: dark.
+#
+# Brand:
+#   Primary  — Qualixar purple #7C3AED (light) / #A78BFA (dark mode lift)
+#   Accent   — Amber #F59E0B (used for warnings + soft "attention" tones)
+#   Surface  — Off-white on light / slate-black on dark
+#
+# Error / warning tinting (default Streamlit red is harsh) is further softened
+# via _inject_brand_css_html() in agent_amplifier.dashboard.ui.app.
+
+[theme]
+base = "light"
+primaryColor = "#7C3AED"
+backgroundColor = "#FFFFFF"
+secondaryBackgroundColor = "#F8FAFC"
+textColor = "#0F172A"
+font = "sans serif"
+
+[theme.dark]
+primaryColor = "#A78BFA"
+backgroundColor = "#0B1020"
+secondaryBackgroundColor = "#111827"
+textColor = "#E5E7EB"
+
+# toolbarMode = "developer" keeps the hamburger menu visible at top-right so
+# users can switch between Light / Dark / Custom theme via "Settings → Choose
+# app theme", access screencast recording, print, etc. The "minimal" mode
+# hides this menu and removes the only built-in path to switch themes.
+[client]
+toolbarMode = "developer"
+
+[server]
+headless = true

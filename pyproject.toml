@@ -1,0 +1,218 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "agent-amplifier"
+version = "1.0.0"
+description = "Runtime amplification for AI agents. By Qualixar."
+readme = "README.md"
+requires-python = ">=3.11"
+# PEP 639: SPDX expression form replaces the legacy
+# license = { text = ... } table. license-files explicitly enumerates the
+# license + notice files shipped with the wheel/sdist.
+license = "AGPL-3.0-or-later"
+license-files = ["LICENSE", "NOTICE"]
+authors = [
+  { name = "Qualixar" },
+]
+keywords = [
+  "ai",
+  "agents",
+  "amplifier",
+  "runtime",
+  "qualixar",
+  "agent-reliability",
+  "prompt-injection-defense",
+  "effort-routing",
+]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Intended Audience :: Developers",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
+]
+
+dependencies = [
+  "anyio>=4.4",
+  "fastapi>=0.115",
+  "tomli-w>=1.0",
+  "uvicorn[standard]>=0.30",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.0",
+  "pytest-cov>=5.0",
+  "pytest-randomly>=3.15",
+  "pytest-subprocess>=1.5",
+  "pytest-asyncio>=0.23",
+  "hypothesis>=6.100",
+  "ruff>=0.6",
+  "mypy>=1.10",
+  # Declare bandit so the security-scan exit gate is
+  # reproducible in a fresh dev install. semgrep is intentionally NOT
+  # declared — it's invoked as a CLI tool, not a Python lib.
+  "bandit>=1.7",
+  # pip-audit pinned so the dependency-CVE gate is
+  # reproducible in a fresh dev install.
+  "pip-audit>=2.7",
+  # ``build`` declared so a fresh venv can run
+  # ``python -m build`` to reproduce wheel + sdist artifacts without
+  # relying on implicit isolated-build behaviour.
+  "build>=1.2",
+  "tox>=4",
+  # rich is a runtime extra (`[pretty]`) but is also a dev dep so the
+  # observers.py rich-path is exercised in CI coverage.
+  "rich>=13",
+  # matplotlib is a soft dep of bench.py for SVG export. Also ships in dev
+  # so the matplotlib-success branch is exercised in CI coverage.
+  "matplotlib>=3.7",
+]
+pretty = [
+  "rich>=13",
+]
+# ``bench`` extra now ships matplotlib so
+# ``pip install agent-amplifier[bench]`` can run ``--export-svg`` without
+# the optional-import fallback.
+bench = [
+  "matplotlib>=3.7",
+]
+# Opt-in tokenizer-aware budget accuracy. Without this extra,
+# TokenBudgetController falls back to ``len(text) // 4`` estimation.
+# Picks ``o200k_base`` for modern frontier
+# models (GPT-4o/5, Claude 3.5+, Opus 4.x) and ``cl100k_base`` for legacy.
+tokenizer = [
+  "tiktoken>=0.7",
+]
+dashboard = [
+  "streamlit>=1.40",
+  "streamlit-sortables>=0.3.1",
+  "altair>=5.0",
+  "httpx>=0.27",
+]
+
+[project.scripts]
+agent-amp = "agent_amplifier.cli:main"
+
+[project.urls]
+Homepage = "https://qualixar.com"
+Repository = "https://github.com/qualixar/agent-amplifier"
+Issues = "https://github.com/qualixar/agent-amplifier/issues"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/agent_amplifier"]
+
+[tool.hatch.build.targets.sdist]
+# Include docs, tests, and metadata so source-package consumers can
+# resolve every README link and reproduce the test suite from sdist.
+include = [
+  "src/agent_amplifier",
+  "README.md",
+  "LICENSE",
+  "NOTICE",
+  "CHANGELOG.md",
+  "CONTRIBUTING.md",
+  "docs/",
+  "examples/",
+  "tests/",
+  "pyproject.toml",
+]
+
+# ---------------------------------------------------------------------------
+# Test runner
+# ---------------------------------------------------------------------------
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra --strict-markers"
+markers = [
+  "perf: wall-clock performance assertions (excluded by default; gate separately)",
+]
+filterwarnings = [
+  "error",
+]
+
+# ---------------------------------------------------------------------------
+# Lint
+# ---------------------------------------------------------------------------
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = [
+  "E", "F", "W",          # pycodestyle / pyflakes
+  "I",                      # isort
+  "B",                      # flake8-bugbear (B019 catches lru_cache footgun)
+  "UP",                     # pyupgrade
+  "SIM",                    # flake8-simplify
+  "RUF",                    # ruff-specific
+]
+ignore = [
+  "E501",                   # line-length handled by formatter
+  # UP042 suggests StrEnum over (str, Enum) mixin — we pin
+  # the (str, Enum) form for back-compat with Python 3.11 stdlib semantics
+  # and explicit value-as-string serialization. Documented design choice.
+  "UP042",
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["B011"]
+# Cluster D modules legitimately use U+2039 (‹) / U+203A (›) as the
+# tag-smuggling mitigation outputs. Suppress RUF001/RUF002/RUF003 there
+# because the look-alike characters are intentional and verified.
+"src/agent_amplifier/semantic_modifiers.py" = ["RUF001", "RUF002", "RUF003"]
+"src/agent_amplifier/phase_prompts.py" = ["RUF001", "RUF002", "RUF003"]
+"src/agent_amplifier/personas.py" = ["RUF001", "RUF002", "RUF003"]
+"src/agent_amplifier/kernel.py" = ["RUF002"]
+# recall_safety.py contains the canonical lookalike + zero-width
+# table. The unicode chars are intentional defense outputs, not typos.
+"src/agent_amplifier/_internal/recall_safety.py" = [
+  "RUF001", "RUF002", "RUF003",
+]
+"tests/test_xml_neutralize.py" = ["RUF001", "RUF002", "RUF003"]
+"tests/test_semantic_modifiers.py" = ["RUF001", "RUF002", "RUF003"]
+"tests/test_phase_prompts.py" = ["RUF001", "RUF002", "RUF003"]
+"tests/test_personas.py" = ["RUF001", "RUF002", "RUF003"]
+# recall-safety tests construct the new lookalike + zero-width
+# inputs verbatim so the unicode chars must be allowed.
+"tests/test_recall_safety.py" = ["RUF001", "RUF002", "RUF003"]
+# kernel-memory-plane tests use lookalike chars to
+# exercise the smuggling signal path.
+"tests/test_kernel_memory_plane.py" = ["RUF001", "RUF002", "RUF003"]
+# RecalledPattern docstring (V2.1) uses U+2013 (en dash) in "0.0–1.0".
+# Intentional typography; documented Unicode is fine in source.
+"src/agent_amplifier/types.py" = ["RUF001", "RUF002", "RUF003"]
+
+# ---------------------------------------------------------------------------
+# Type checking
+# ---------------------------------------------------------------------------
+[tool.mypy]
+python_version = "3.11"
+strict = true
+files = ["src/agent_amplifier"]
+warn_unused_ignores = true
+warn_unreachable = true
+disallow_any_explicit = false
+no_implicit_reexport = true
+
+# ---------------------------------------------------------------------------
+# Coverage
+# ---------------------------------------------------------------------------
+[tool.coverage.run]
+source = ["src/agent_amplifier"]
+branch = true
+
+[tool.coverage.report]
+exclude_lines = [
+  "pragma: no cover",
+  "raise NotImplementedError",
+  "if TYPE_CHECKING:",
+  "if __name__ == .__main__.:",
+]
+show_missing = true
+skip_covered = false

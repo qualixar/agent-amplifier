@@ -1,0 +1,37 @@
+{
+  "name": "agent-amplifier",
+  "version": "1.0.0",
+  "description": "npm name reservation for the Python package agent-amplifier (PyPI). Use `pip install agent-amplifier`.",
+  "main": "index.js",
+  "files": [
+    "README.md",
+    "LICENSE",
+    "NOTICE",
+    "index.js"
+  ],
+  "scripts": {
+    "test": "node -e \"const m=require('./index.js'); if(!m.metadataOnly||m.pypiPackage!=='agent-amplifier'){console.error('npm-package metadata invariant broken');process.exit(1)}console.log('metadata-only stub ok')\""
+  },
+  "keywords": [
+    "ai",
+    "agents",
+    "amplifier",
+    "runtime",
+    "qualixar",
+    "name-reservation"
+  ],
+  "author": {
+    "name": "Qualixar",
+    "email": "hi@qualixar.com",
+    "url": "https://qualixar.com"
+  },
+  "license": "AGPL-3.0-or-later",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/qualixar/agent-amplifier.git"
+  },
+  "homepage": "https://github.com/qualixar/agent-amplifier",
+  "bugs": {
+    "url": "https://github.com/qualixar/agent-amplifier/issues"
+  }
+}

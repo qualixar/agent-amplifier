@@ -1,0 +1,43 @@
+# Backup / strategy / research / plans — never published
+.backup/
+*.bak
+*.bak.*
+*.internal.bak
+src.bak.pre-ip-scrub/
+tests.bak.pre-ip-scrub/
+setup.cfg
+
+# Build artifacts
+dist/
+build/
+*.egg-info/
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Mutation-test output (mutmut)
+mutants/
+
+# Tox cache
+.tox/
+
+# Local venv
+.venv/
+
+# npm
+node_modules/
+*.log
+
+# Environment / secrets
+.env
+.env.*
+!.env.example
+
+# IDE
+.vscode/
+.idea/
+*.swp
+.DS_Store

@@ -1,0 +1,38 @@
+name: codeql
+
+# Stage 10 CODEX-036: GitHub-native SAST.  Runs on push, PRs, and weekly
+# so newly disclosed CVEs in our patterns surface even between releases.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: "27 3 * * 1"  # Mondays 03:27 UTC
+
+permissions:
+  contents: read
+  security-events: write
+  actions: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        language: [python]
+    steps:
+      - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11  # v4.1.1
+      - uses: github/codeql-action/init@b611370bb5703a7efb587f9d136a52ea24c5c38c  # v3.25.11
+        with:
+          languages: ${{ matrix.language }}
+          queries: security-extended,security-and-quality
+      - uses: github/codeql-action/analyze@b611370bb5703a7efb587f9d136a52ea24c5c38c  # v3.25.11
+        with:
+          category: "/language:${{ matrix.language }}"
