@@ -105,9 +105,15 @@ CREATE TABLE IF NOT EXISTS envelopes (
     phase TEXT NOT NULL,
     envelope_text TEXT NOT NULL,
     created_at REAL NOT NULL,
+    suggested_model TEXT,
     PRIMARY KEY (session_id, turn_id)
 )
 """
+
+# v1.1 column adds for envelopes. Same idempotent migration pattern.
+_ENVELOPES_V1_1_COLUMNS: Final[tuple[tuple[str, str], ...]] = (
+    ("suggested_model", "TEXT"),
+)
 
 _SCHEMA_EVENTS = """
 CREATE TABLE IF NOT EXISTS events (
@@ -208,13 +214,17 @@ class StateStore:
         ``state.py`` back-compat discipline (Apache-2.0 product), columns
         are never dropped or renamed — only added.
         """
-        cur = conn.execute("PRAGMA table_info(sessions)")
-        existing = {row[1] for row in cur.fetchall()}
-        for col_name, ddl in _SESSIONS_V1_1_COLUMNS:
-            if col_name not in existing:
-                conn.execute(
-                    f"ALTER TABLE sessions ADD COLUMN {col_name} {ddl}"
-                )
+        for table, additions in (
+            ("sessions", _SESSIONS_V1_1_COLUMNS),
+            ("envelopes", _ENVELOPES_V1_1_COLUMNS),
+        ):
+            cur = conn.execute(f"PRAGMA table_info({table})")
+            existing = {row[1] for row in cur.fetchall()}
+            for col_name, ddl in additions:
+                if col_name not in existing:
+                    conn.execute(
+                        f"ALTER TABLE {table} ADD COLUMN {col_name} {ddl}"
+                    )
 
     @contextlib.contextmanager
     def _connect(self) -> Iterator[sqlite3.Connection]:
@@ -430,12 +440,17 @@ class StateStore:
         persona: str | None,
         phase: str,
         envelope_text: str,
+        suggested_model: str | None = None,
     ) -> None:
         """Persist the envelope produced by ``kernel.before_step`` for this turn.
 
         Call this right after the kernel returns the envelope and BEFORE we
         emit the system-reminder injection, so a crash mid-injection still
         leaves a record of what we were trying to inject.
+
+        ``suggested_model`` is the v1.1 cost-routing receipt — the tier
+        string returned by ``ModelRouter().suggest(complexity).tier`` at
+        envelope creation. Defaults to ``None`` for v1.0 callers.
         """
         with self._connect() as conn:
             conn.execute(
@@ -443,8 +458,9 @@ class StateStore:
                 INSERT OR REPLACE INTO envelopes (
                     session_id, turn_id, user_prompt_redacted,
                     classification_complexity, classification_domain,
-                    thinking_trigger, persona, phase, envelope_text, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    thinking_trigger, persona, phase, envelope_text,
+                    created_at, suggested_model
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     session_id,
@@ -457,6 +473,7 @@ class StateStore:
                     phase,
                     envelope_text,
                     time.time(),
+                    suggested_model,
                 ),
             )
             conn.commit()

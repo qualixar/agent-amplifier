@@ -34,6 +34,7 @@ from typing import Any
 from agent_amplifier import AgentAmplifier
 from agent_amplifier._internal.redact import redact
 from agent_amplifier.adapters.claude_code.state import StateStore
+from agent_amplifier.model_router import ModelRouter
 from agent_amplifier.types import EffortLevel, TaskClassification
 
 LOG = logging.getLogger("agent_amplifier.adapters.claude_code.hooks")
@@ -336,6 +337,19 @@ def _on_user_prompt_submit_impl() -> None:
     finally:
         amp.close()
 
+    # v1.1 F4: persist the cost-routing receipt — ModelRouter's tier
+    # recommendation for this envelope's complexity. Lets the report show
+    # actual per-turn model suggestions over time. ModelRouter is a pure
+    # in-process classifier; no API calls.
+    suggested_tier: str | None
+    try:
+        suggested_tier = ModelRouter().suggest(
+            envelope.classification.complexity.value
+        ).tier
+    except Exception as exc:  # pragma: no cover - fail-open defense
+        LOG.warning("ModelRouter.suggest failed (fail-open): %s", exc)
+        suggested_tier = None
+
     # Persist the envelope for the Stop hook to read at session end.
     store.record_envelope(
         session_id,
@@ -347,6 +361,7 @@ def _on_user_prompt_submit_impl() -> None:
         persona=envelope.persona,
         phase=envelope.phase,
         envelope_text=envelope.envelope,
+        suggested_model=suggested_tier,
     )
 
     # Inject the envelope as additional context. Claude Code's
