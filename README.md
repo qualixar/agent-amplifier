@@ -110,6 +110,29 @@ The hard cap is 4 iterations by default. On high-complexity turns, convergence w
 
 ---
 
+## How AA measures itself (v1.1)
+
+A single number lies. v1.1 captures a triple-signal per turn so the dashboard is honest about what's working and what isn't.
+
+- **`completed`** -- did the agent finish every tool call before stopping? Measures liveness, not quality. (v1.0 stored this under `converged`; the old name stays for one minor and is removed in v1.2.)
+- **`quality_score`** -- bounded `[0, 1]`. Three deterministic tiers compose into one number:
+  - **Tier 1 (always):** Jaccard similarity between the envelope goal text and Claude's final assistant message (extracted from the session transcript JSONL). Re-uses the same keyword-set extractor as the convergence detector.
+  - **Tier 2 (optional, ~40ms):** local embedding via Ollama's `nomic-embed-text` when Tier 1 lands in the ambiguous band (0.30-0.70). Cosine similarity is blended 30/70 with the lexical signal. Falls back to Tier 1 alone if Ollama is unreachable.
+  - **Tier 3 (always):** trajectory delta. Penalises looping (3+ identical PreToolUse events) and missing reconnaissance (Edit/Write/MultiEdit on a path that was never Read). Up to -0.20.
+- **`convergence_state`** -- per-session trajectory enum: `improving` / `stagnant` / `oscillating` / `converged`. Derived from the rolling history of `quality_score` for the session.
+
+Synthetic / benchmark / demo sessions are tagged `is_synthetic=1` and hidden from `agent-amp report` by default. Pass `--include-synthetic` to see them, `--synthetic-only` to inspect them alone. This prevents load-test data from poisoning the real-usage dashboard.
+
+AA does **no extra LLM calls** on the Claude Code path. Tier 2 invokes a local Ollama embedding model (≈40ms on CPU); that is not an LLM call in the conventional sense and is opt-out via `AGENT_AMP_EMBED_ENABLED=0`. The kernel path (CrewAI / LangGraph / AgentScope / LangChain adapters) runs a multi-iteration loop with a real convergence detector -- opt-in per adapter.
+
+### Statistical verdicts for A/B benchmarks
+
+Phase 4 benchmarks (raw model vs amplified) use [AgentAssay](https://github.com/qualixar/agentassay)'s published verdict framework -- Wilson confidence intervals, Fisher exact test on completion rates, Mann-Whitney U on quality_score distributions, and a 3-valued PASS / FAIL / INCONCLUSIVE verdict that honestly says "not enough samples" instead of overclaiming. Install with `pip install 'agent-amplifier[bench]'`.
+
+AgentAssay is the AI Reliability Engineering category's stochastic test framework -- Agent Amplifier composes with it the same way it composes with SuperLocalMemory.
+
+---
+
 ## Compose with SuperLocalMemory
 
 Agent Amplifier owns execution quality (effort, drift, convergence). [SuperLocalMemory](https://github.com/qualixar/superlocalmemory) owns memory (recall, write, decay, entity graph). They never compete; they always compose.

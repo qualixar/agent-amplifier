@@ -40,9 +40,30 @@ personas.py      — escalating audit per iteration
 token_budget.py  — cost-bounded amplification
 tool_selector.py — MoE-inspired tool shortlisting
 model_router.py  — complexity → model tier suggestion
+bench_verdict.py — AgentAssay verdict wrapper (Phase 4 A/B benchmarks)
+_internal/embedding.py — Ollama HTTP client for Tier 2 quality score
 adapters/        — 7 host adapters + SLM memory adapter
 dashboard/       — FastAPI backend + Streamlit UI
 ```
+
+## Metric semantics (v1.1)
+
+AA has two execution paths and they measure different things — do not confuse them when reading dashboards.
+
+**Claude Code adapter (hook-time, no extra LLM calls):**
+
+  * One amplification cycle per user turn — `iterations_completed=1` is correct by design, not a bug.
+  * `outcomes.completed` mirrors v1.0's `converged` (`in_flight==0` at Stop). Liveness only.
+  * `outcomes.quality_score` is the layered metric: Tier 1 Jaccard always; Tier 2 nomic embedding (via Ollama) only when Tier 1 is in the [0.30, 0.70] ambiguous band; Tier 3 trajectory delta penalises looping + missing-recon. All bounded to [0, 1].
+  * `outcomes.convergence_state` is the per-session trajectory class derived from the rolling `quality_score` history. None when current quality_score is None.
+  * `is_synthetic=1` sessions are excluded from dashboards by default (env var `AGENT_AMP_SYNTHETIC=1` or non-existent cwd triggers the flag).
+
+**Kernel path (CrewAI / LangGraph / AgentScope / LangChain — opt-in per adapter):**
+
+  * Multi-iteration loop using `convergence.py::ConvergenceDetector` (max_iterations=4 default, Jaccard threshold 0.95, Gompertz damping).
+  * `iterations_completed > 1` reflects real critic-loop iterations.
+
+**Cross-version benchmark verdicts** (Phase 4) use `bench_verdict.py` which wraps AgentAssay's `VerdictFunction`. The viral claim in any release post must cite the AgentAssay verdict, not a raw average — Wilson CI + Fisher / Mann-Whitney with a 3-valued PASS / FAIL / INCONCLUSIVE result is the bar.
 
 ## Adapters
 
