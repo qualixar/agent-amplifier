@@ -42,6 +42,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, Final
 
+from agent_amplifier._internal import embedding as _embedding
 from agent_amplifier._internal.keyword_set import keyword_set
 from agent_amplifier._internal.redact import redact
 from agent_amplifier.adapters.claude_code.state import StateStore
@@ -189,6 +190,59 @@ _READ_TOOL: Final[str] = "Read"
 _CONVERGENCE_CONVERGED_THRESHOLD: Final[float] = 0.85
 _CONVERGENCE_STAGNANT_BAND: Final[float] = 0.05
 _CONVERGENCE_HISTORY_DEPTH: Final[int] = 3
+
+# F1D Tier 2 thresholds — only fire the embedding compute when Tier 1
+# falls in the ambiguous zone where lexical can't decide. Blend weights:
+# semantic carries the majority since it captures paraphrase.
+_TIER2_AMBIG_LOW: Final[float] = 0.30
+_TIER2_AMBIG_HIGH: Final[float] = 0.70
+_TIER2_LEXICAL_WEIGHT: Final[float] = 0.30
+_TIER2_SEMANTIC_WEIGHT: Final[float] = 0.70
+
+
+def _maybe_blend_tier2(
+    tier1: float,
+    *,
+    envelope: Mapping[str, Any],
+    session_id: str,
+    project_cwd: str,
+) -> float:
+    """Optionally blend a local-embedding semantic score into Tier 1.
+
+    Fires only when Tier 1 is in the ``[_TIER2_AMBIG_LOW, _TIER2_AMBIG_HIGH]``
+    band — outside that range the lexical signal is already decisive and
+    the 40ms embedding round-trip is wasted budget.
+
+    On any failure (Ollama down, disabled, model missing, network glitch),
+    returns the untouched Tier 1. Fail-open per AA's hook contract.
+    """
+    if tier1 < _TIER2_AMBIG_LOW or tier1 > _TIER2_AMBIG_HIGH:
+        return tier1
+    if not _embedding.is_tier2_enabled():
+        return tier1
+    try:
+        goal_parts: list[str] = []
+        prompt = envelope.get("user_prompt_redacted")
+        if isinstance(prompt, str):
+            goal_parts.append(prompt)
+        env_text = envelope.get("envelope_text")
+        if isinstance(env_text, str):
+            goal_parts.append(env_text)
+        if not goal_parts:
+            return tier1
+        final = final_assistant_message(session_id, Path(project_cwd))
+        if final is None:
+            return tier1
+        cos = _embedding.similarity(" ".join(goal_parts), final)
+    except Exception as exc:  # pragma: no cover - fail-open defense
+        LOG.warning("Tier 2 embedding blend failed (fail-open): %s", exc)
+        return tier1
+    if cos is None:
+        return tier1
+    blended = (
+        _TIER2_LEXICAL_WEIGHT * tier1 + _TIER2_SEMANTIC_WEIGHT * cos
+    )
+    return max(0.0, min(1.0, blended))
 
 
 def _compute_convergence_state(
@@ -479,8 +533,16 @@ def _on_stop_impl() -> None:
     if tier1 is None:
         quality_score: float | None = None
     else:
+        # F1D Tier 2: blend in local-embedding semantic similarity when
+        # Tier 1 is ambiguous. Fail-open if Ollama is unreachable.
+        blended = _maybe_blend_tier2(
+            tier1,
+            envelope=last_envelope,
+            session_id=session_id,
+            project_cwd=project_cwd,
+        )
         delta = _compute_trajectory_delta(store, session_id, turn_id)
-        quality_score = max(0.0, min(1.0, tier1 + delta))
+        quality_score = max(0.0, min(1.0, blended + delta))
 
     # F1C: classify the session-level trajectory BEFORE writing the current
     # row (so history excludes the in-flight value).

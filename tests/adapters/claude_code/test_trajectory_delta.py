@@ -308,6 +308,9 @@ def test_on_stop_writes_real_quality_score_with_trajectory_delta(
     transcripts = tmp_path / "transcripts"
     transcripts.mkdir()
     monkeypatch.setenv("AGENT_AMP_TRANSCRIPT_DIR", str(transcripts))
+    # Disable Tier 2 so this integration test stays deterministic on
+    # machines where Ollama happens to be running.
+    monkeypatch.setenv("AGENT_AMP_EMBED_ENABLED", "0")
 
     # Seed session + envelope with overlapping goal/output words
     s = _state.StateStore(db_path)
