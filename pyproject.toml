@@ -78,8 +78,13 @@ pretty = [
 # ``bench`` extra now ships matplotlib so
 # ``pip install agent-amplifier[bench]`` can run ``--export-svg`` without
 # the optional-import fallback.
+# AgentAssay is also pulled in: the Phase 4 A/B benchmark wraps
+# AgentAssay's ``VerdictFunction`` (Wilson CI + Fisher exact + Mann-Whitney
+# U) for statistically defensible regression verdicts on quality_score
+# and completion_rate. See https://github.com/qualixar/agentassay
 bench = [
   "matplotlib>=3.7",
+  "agentassay>=0.1",
 ]
 # Opt-in tokenizer-aware budget accuracy. Without this extra,
 # TokenBudgetController falls back to ``len(text) // 4`` estimation.
