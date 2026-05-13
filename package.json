@@ -1,16 +1,27 @@
 {
   "name": "agent-amplifier",
-  "version": "1.0.0",
-  "description": "npm name reservation for the Python package agent-amplifier (PyPI). Use `pip install agent-amplifier`.",
+  "version": "1.1.0",
+  "description": "Runtime amplification for AI coding agents. Same product as the PyPI package — npm install bootstraps the Python package via pipx so `npm install -g` and `pip install` both yield a working `agent-amp` CLI.",
   "main": "index.js",
+  "bin": {
+    "agent-amp": "./bin/agent-amp"
+  },
   "files": [
     "README.md",
     "LICENSE",
     "NOTICE",
-    "index.js"
+    "CHANGELOG.md",
+    "index.js",
+    "bin/",
+    "scripts/"
   ],
   "scripts": {
-    "test": "node -e \"const m=require('./index.js'); if(!m.metadataOnly||m.pypiPackage!=='agent-amplifier'){console.error('npm-package metadata invariant broken');process.exit(1)}console.log('metadata-only stub ok')\""
+    "test": "node -e \"const m=require('./index.js'); if(m.pypiPackage!=='agent-amplifier'){console.error('npm package metadata invariant broken');process.exit(1)}console.log('npm wrapper metadata ok')\"",
+    "postinstall": "node scripts/install.js",
+    "preuninstall": "node scripts/uninstall.js"
+  },
+  "engines": {
+    "node": ">=18"
   },
   "keywords": [
     "ai",
@@ -18,7 +29,8 @@
     "amplifier",
     "runtime",
     "qualixar",
-    "name-reservation"
+    "claude-code",
+    "ai-reliability-engineering"
   ],
   "author": {
     "name": "Qualixar",

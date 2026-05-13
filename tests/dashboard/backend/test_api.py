@@ -19,7 +19,7 @@ def test_health_reports_version_and_db_path(
     assert res.status_code == 200
     body = res.json()
     assert body["status"] == "ok"
-    assert body["amp_version"] == "1.0.0"
+    assert body["amp_version"] == "1.1.0"
     assert body["db_path"] == str(state_db)
 
 

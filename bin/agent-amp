@@ -1,0 +1,80 @@
+#!/usr/bin/env node
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright 2026 Qualixar
+//
+// agent-amp — Node wrapper that locates and execs the Python-installed
+// agent-amp binary (placed on disk by the npm postinstall script via pipx
+// or pip). The wrapper exists so `npm install -g agent-amplifier` produces
+// a working `agent-amp` command immediately, identical to what
+// `pip install agent-amplifier` provides.
+//
+// All real work happens in Python (src/agent_amplifier/cli.py). This file
+// is intentionally tiny — its only job is to find the binary and exec it.
+
+"use strict";
+
+const { spawnSync } = require("child_process");
+const fs = require("fs");
+const os = require("os");
+const path = require("path");
+
+function isExecutable(p) {
+  try {
+    fs.accessSync(p, fs.constants.X_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function findPipxBinary() {
+  const home = os.homedir();
+  // Standard pipx layouts on macOS / Linux / Windows.
+  const candidates = [
+    path.join(home, ".local", "bin", "agent-amp"),
+    path.join(home, ".local", "pipx", "venvs", "agent-amplifier", "bin", "agent-amp"),
+    // macOS Homebrew pipx default
+    path.join(home, "Library", "Application Support", "pipx", "venvs", "agent-amplifier", "bin", "agent-amp"),
+    // Windows
+    path.join(home, ".local", "bin", "agent-amp.exe"),
+    path.join(home, "AppData", "Local", "pipx", "pipx", "venvs", "agent-amplifier", "Scripts", "agent-amp.exe"),
+  ];
+  for (const c of candidates) {
+    if (isExecutable(c)) return c;
+  }
+  return null;
+}
+
+function findOnPath() {
+  const lookup = process.platform === "win32" ? "where" : "which";
+  const r = spawnSync(lookup, ["agent-amp"], { encoding: "utf8" });
+  if (r.status !== 0) return null;
+  const first = (r.stdout || "").split(/\r?\n/).find((line) => line && line.trim());
+  if (!first) return null;
+  const resolved = first.trim();
+  // Guard against PATH-resolving back to this same Node wrapper.
+  if (resolved === __filename || resolved.endsWith(path.sep + "bin" + path.sep + "agent-amp")) {
+    if (resolved === __filename) return null;
+  }
+  return isExecutable(resolved) ? resolved : null;
+}
+
+function fail() {
+  process.stderr.write(
+    "agent-amp: Python install not found.\n" +
+      "  The npm package needs the Python package to be installed too.\n" +
+      "  Try:  pipx install agent-amplifier    (or:  pip install --user agent-amplifier)\n" +
+      "  Or re-run:  npm rebuild -g agent-amplifier\n"
+  );
+  process.exit(127);
+}
+
+const target = findPipxBinary() || findOnPath();
+if (!target) fail();
+
+const r = spawnSync(target, process.argv.slice(2), { stdio: "inherit" });
+if (r.error) {
+  process.stderr.write(`agent-amp: failed to exec ${target}: ${r.error.message}\n`);
+  process.exit(1);
+}
+process.exit(r.status == null ? 1 : r.status);

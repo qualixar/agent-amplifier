@@ -47,8 +47,20 @@ Agent Amplifier is a small local layer that sits between you and your AI coding 
 
 ## Install (60 seconds)
 
+Three install paths. Same product, same `agent-amp` CLI either way — pick whichever fits your workflow.
+
 ```bash
+# Option 1 — pip (recommended for Python-native workflows)
 pip install agent-amplifier
+
+# Option 2 — pipx (recommended; isolated venv, no dependency conflicts)
+pipx install agent-amplifier
+
+# Option 3 — npm (bootstraps the Python package via pipx under the hood)
+npm install -g agent-amplifier
+```
+
+```bash
 agent-amp install claude-code    # drops 5 hooks into ~/.claude/settings.json
 # restart Claude Code -- done
 ```
@@ -60,6 +72,8 @@ agent-amp doctor                 # environment diagnostics
 agent-amp demo "Refactor auth to use JWT"   # see before/after envelope
 agent-amp report                 # real telemetry from your sessions
 ```
+
+> The npm wrapper requires Python 3.11+ on `PATH` (Agent Amplifier is a Python product). On `npm install`, a postinstall script runs `pipx install agent-amplifier==<version>` and wires `agent-amp` onto your shell. Set `AGENT_AMP_SKIP_POSTINSTALL=1` to opt out (CI / Docker). All three install paths converge on the same on-disk binary.
 
 ---
 
