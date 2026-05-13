@@ -279,6 +279,81 @@ def test_doctor_text_handles_missing_state_db(
     assert "state.db missing" in out
 
 
+def test_telemetry_health_zero_outcomes_keeps_quality_pct_none(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Empty outcomes table → ``quality_coverage_pct`` stays None (branch
+    where total==0 skips the percentage assignment)."""
+    from agent_amplifier.adapters.claude_code import state as _state
+
+    monkeypatch.setattr(_state, "_DEFAULT_STATE_DIR", tmp_path / "amp")
+    # Create the schema but don't write any outcomes.
+    _state.StateStore(tmp_path / "amp" / "state.db")
+    health = _cli._telemetry_health()
+    assert health["state_db_exists"] is True
+    assert health["outcomes"] == 0
+    assert health["quality_coverage_pct"] is None
+
+
+def test_telemetry_health_no_sessions_keeps_last_activity_none(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Empty sessions table → ``last_activity_at`` stays None (branch where
+    ``last`` is ``(None,)`` and the inner ``last[0]`` is falsy)."""
+    from agent_amplifier.adapters.claude_code import state as _state
+
+    monkeypatch.setattr(_state, "_DEFAULT_STATE_DIR", tmp_path / "amp")
+    _state.StateStore(tmp_path / "amp" / "state.db")
+    health = _cli._telemetry_health()
+    assert health["sessions"] == 0
+    assert health["last_activity_at"] is None
+
+
+def test_doctor_text_pre_f2_db_omits_optional_blocks(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """When the state.db exists but is pre-F2/F1A (no is_synthetic, no
+    quality_score columns, no sessions), the doctor's text output skips
+    the conditional 'real / synthetic', 'quality coverage', and 'last
+    activity' lines — exercises the False branches in `_cmd_doctor`.
+    """
+    import sqlite3
+    from contextlib import closing
+
+    from agent_amplifier.adapters.claude_code import state as _state
+
+    db_path = tmp_path / "amp" / "state.db"
+    db_path.parent.mkdir(parents=True)
+    # Build an empty, pre-F2/F1A schema by hand (no migrations run).
+    with closing(sqlite3.connect(str(db_path))) as conn:
+        conn.execute(
+            "CREATE TABLE sessions (session_id TEXT, cwd TEXT, "
+            "started_at REAL, last_seen_at REAL)"
+        )
+        conn.execute("CREATE TABLE envelopes (session_id TEXT)")
+        conn.execute(
+            "CREATE TABLE outcomes (session_id TEXT, turn_id INTEGER, "
+            "iterations_completed INTEGER, converged INTEGER, "
+            "written_at REAL)"
+        )
+        conn.commit()
+    monkeypatch.setattr(_state, "_DEFAULT_STATE_DIR", tmp_path / "amp")
+    monkeypatch.setattr(
+        socket,
+        "create_connection",
+        lambda *a, **k: (_ for _ in ()).throw(OSError()),
+    )
+    rc = _cli.main(["doctor"])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "telemetry:" in out
+    assert "real / synthetic" not in out  # column missing → block skipped
+    assert "quality coverage" not in out  # column missing → block skipped
+    assert "last activity" not in out  # no rows → branch skipped
+
+
 def test_doctor_text_slm_daemon_alive_message(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
