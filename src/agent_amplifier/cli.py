@@ -93,7 +93,12 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="print one snapshot and exit (for scripting/testing)",
     )
-    sub.add_parser("doctor", help="environment diagnostics")
+    doctor_p = sub.add_parser("doctor", help="environment diagnostics")
+    doctor_p.add_argument(
+        "--json",
+        action="store_true",
+        help="emit structured JSON instead of human-readable text",
+    )
 
     p_install = sub.add_parser("install", help="install adapter")
     p_install.add_argument("target", nargs="?")
@@ -208,7 +213,7 @@ def main(argv: list[str] | None = None) -> int:
             return _cmd_status_watch(once=getattr(args, "once", False))
         return _cmd_status()
     if args.cmd == "doctor":
-        return _cmd_doctor()
+        return _cmd_doctor(as_json=getattr(args, "json", False))
     if args.cmd == "install":
         return _cmd_install(args)
     if args.cmd == "uninstall":
@@ -353,16 +358,105 @@ def _cmd_status_watch(*, once: bool = False) -> int:
     return 0  # pragma: no cover
 
 
-def _cmd_doctor() -> int:
+def _telemetry_health() -> dict[str, Any]:
+    """Collect F3 telemetry-health signals from the local ``state.db``.
+
+    All fields are best-effort — every error path resolves to ``None``
+    rather than raising. The doctor must never crash on an inaccessible
+    state.db or a corrupted dashboard config.
+    """
+    out: dict[str, Any] = {
+        "state_db_path": None,
+        "state_db_exists": False,
+        "sessions": None,
+        "envelopes": None,
+        "outcomes": None,
+        "real_sessions": None,
+        "synthetic_sessions": None,
+        "quality_coverage_pct": None,
+        "last_activity_at": None,
+    }
+    try:
+        from agent_amplifier.adapters.claude_code import state as _amp_state
+
+        db = _amp_state._DEFAULT_STATE_DIR / _amp_state._STATE_DB_FILENAME
+        out["state_db_path"] = str(db)
+        if not db.exists():
+            return out
+        out["state_db_exists"] = True
+        import sqlite3
+        from contextlib import closing
+
+        with closing(sqlite3.connect(f"file:{db}?mode=ro", uri=True)) as conn:
+            (out["sessions"],) = conn.execute(
+                "SELECT COUNT(*) FROM sessions"
+            ).fetchone()
+            (out["envelopes"],) = conn.execute(
+                "SELECT COUNT(*) FROM envelopes"
+            ).fetchone()
+            (out["outcomes"],) = conn.execute(
+                "SELECT COUNT(*) FROM outcomes"
+            ).fetchone()
+            # is_synthetic column exists after F2 migration.
+            try:
+                (out["real_sessions"],) = conn.execute(
+                    "SELECT COUNT(*) FROM sessions WHERE is_synthetic = 0"
+                ).fetchone()
+                (out["synthetic_sessions"],) = conn.execute(
+                    "SELECT COUNT(*) FROM sessions WHERE is_synthetic = 1"
+                ).fetchone()
+            except sqlite3.OperationalError:
+                pass  # pre-F2 DB before migration ran
+            # quality_score column exists after F1A migration.
+            try:
+                row = conn.execute(
+                    "SELECT COUNT(*), SUM(CASE WHEN quality_score IS NOT NULL "
+                    "THEN 1 ELSE 0 END) FROM outcomes"
+                ).fetchone()
+                total, scored = (row[0] or 0), (row[1] or 0)
+                if total:
+                    out["quality_coverage_pct"] = round(100.0 * scored / total, 1)
+            except sqlite3.OperationalError:
+                pass  # pre-F1A DB
+            last = conn.execute(
+                "SELECT MAX(last_seen_at) FROM sessions"
+            ).fetchone()
+            if last and last[0]:
+                out["last_activity_at"] = float(last[0])
+    except Exception:  # pragma: no cover - defensive
+        return out
+    return out
+
+
+def _slm_daemon_probe(host: str = "127.0.0.1", port: int = 8765,
+                      timeout_s: float = 0.5) -> bool:
+    """Return True if a TCP connection to the SLM daemon succeeds."""
+    import socket
+
+    try:
+        with socket.create_connection((host, port), timeout=timeout_s):
+            return True
+    except OSError:
+        return False
+
+
+def _cmd_doctor(*, as_json: bool = False) -> int:
     """Print environment diagnostics + per-adapter detection status.
 
-    MED-2 (QA-M01): post V2.1 universal-memory pivot, the
-    relevant signal is which host adapters detect a memory source on this
-    machine — not whether SLM is installed. We enumerate the bundled
-    adapters and report each one's ``detect()`` status. The SLM binary
-    check is preserved as one line under "third-party providers" so
-    existing users still see the wiring hint.
+    v1.1 F3 additions:
+      - Telemetry health block (state.db row counts, synthetic split,
+        quality_score coverage, last activity timestamp).
+      - SLM daemon TCP probe.
+      - ``--json`` flag for machine-readable output.
+
+    Backward-compat: the existing human-readable text surface is
+    preserved verbatim above the new telemetry section, and the exit
+    code stays 0 on success regardless of telemetry state. The 0/1/2
+    severity scheme is reserved for v1.2 to avoid breaking shells that
+    currently parse the doctor exit code.
     """
+    if as_json:
+        return _cmd_doctor_json()
     print(f"agent-amp {__version__}")
     print(f"Python   {sys.version.split()[0]} ({platform.python_implementation()})")
     print(f"OS       {platform.system()} {platform.release()} ({platform.machine()})")
@@ -410,6 +504,115 @@ def _cmd_doctor() -> int:
             "  slm              not installed "
             "(pip install superlocalmemory && slm init)"
         )
+    slm_alive = _slm_daemon_probe()
+    print(
+        f"  slm daemon       {'up' if slm_alive else 'down'} "
+        f"(127.0.0.1:8765)"
+    )
+    # v1.1 F3 — telemetry health block.
+    health = _telemetry_health()
+    print("telemetry:")
+    print(f"  state.db         {health['state_db_path']}")
+    if not health["state_db_exists"]:
+        print("  state.db missing (no Claude Code turns recorded yet)")
+    else:
+        print(
+            f"  sessions/envs/outs "
+            f"{health['sessions']} / "
+            f"{health['envelopes']} / {health['outcomes']}"
+        )
+        if health["real_sessions"] is not None:
+            print(
+                f"  real / synthetic   "
+                f"{health['real_sessions']} / "
+                f"{health['synthetic_sessions']}"
+            )
+        if health["quality_coverage_pct"] is not None:
+            print(
+                f"  quality coverage   "
+                f"{health['quality_coverage_pct']}% of outcomes"
+            )
+        if health["last_activity_at"] is not None:
+            import datetime
+
+            ts = datetime.datetime.fromtimestamp(
+                health["last_activity_at"]
+            ).strftime("%Y-%m-%d %H:%M:%S")
+            print(f"  last activity      {ts}")
+    return 0
+
+
+def _cmd_doctor_json() -> int:
+    """JSON output mode for ``agent-amp doctor --json``.
+
+    Stable schema for shell scripting and CI:
+
+      {
+        "agent_amp_version": "1.1.0",
+        "python": {...},
+        "os": {...},
+        "config": {...},
+        "adapters": [{"name": ..., "framework": ..., "detected": bool}, ...],
+        "slm": {"binary_path": str|null, "daemon_alive": bool},
+        "telemetry": {...}  # output of _telemetry_health
+      }
+    """
+    import json as _json
+
+    from agent_amplifier.adapters import (
+        AgentScopeAdapter,
+        ClaudeCodeAdapter,
+        CrewAIAdapter,
+        CursorAdapter,
+        GitHubCopilotAdapter,
+        LangGraphAdapter,
+    )
+
+    bundled: tuple[tuple[str, type[AdapterBase]], ...] = (
+        ("Claude Code", ClaudeCodeAdapter),
+        ("Cursor", CursorAdapter),
+        ("GitHub Copilot", GitHubCopilotAdapter),
+        ("LangGraph", LangGraphAdapter),
+        ("CrewAI", CrewAIAdapter),
+        ("AgentScope", AgentScopeAdapter),
+    )
+    adapters: list[dict[str, Any]] = []
+    for label, cls in bundled:
+        try:
+            detected = cls.detect()
+        except Exception:  # pragma: no cover - defensive
+            detected = False
+        adapters.append(
+            {
+                "name": label,
+                "framework": cls.framework_name,
+                "detected": detected,
+            }
+        )
+    payload = {
+        "agent_amp_version": __version__,
+        "python": {
+            "version": sys.version.split()[0],
+            "implementation": platform.python_implementation(),
+        },
+        "os": {
+            "system": platform.system(),
+            "release": platform.release(),
+            "machine": platform.machine(),
+        },
+        "anyio_version": _anyio_version(),
+        "config": {
+            "primary": str(USER_CONFIG_PATH),
+            "legacy": str(LEGACY_USER_CONFIG_PATH),
+        },
+        "adapters": adapters,
+        "slm": {
+            "binary_path": shutil.which("slm"),
+            "daemon_alive": _slm_daemon_probe(),
+        },
+        "telemetry": _telemetry_health(),
+    }
+    print(_json.dumps(payload, indent=2, sort_keys=True))
     return 0
 
 
