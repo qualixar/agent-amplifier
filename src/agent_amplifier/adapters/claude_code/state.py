@@ -140,9 +140,26 @@ CREATE TABLE IF NOT EXISTS outcomes (
     quality_estimate REAL,
     finalize_report_json TEXT NOT NULL DEFAULT '{}',
     written_at REAL NOT NULL,
+    completed INTEGER NOT NULL DEFAULT 0,
+    quality_score REAL,
+    convergence_state TEXT,
     PRIMARY KEY (session_id, turn_id)
 )
 """
+
+# v1.1 column adds for outcomes. F1: layered quality metric.
+# - completed: mirror of v1.0 `converged` (in_flight==0). Renamed because
+#   "converged" misled callers into thinking it was a quality verdict.
+#   Stays alongside `converged` for one minor; v1.2 deprecates the old name.
+# - quality_score: bounded [0,1] Jaccard similarity between envelope goal
+#   and Claude's final assistant message. NULL if transcript unavailable.
+# - convergence_state: per-session trajectory enum. NULL in F1A; filled
+#   in F1C by per-session ConvergenceDetector.
+_OUTCOMES_V1_1_COLUMNS: Final[tuple[tuple[str, str], ...]] = (
+    ("completed", "INTEGER NOT NULL DEFAULT 0"),
+    ("quality_score", "REAL"),
+    ("convergence_state", "TEXT"),
+)
 
 _SCHEMA_INDEXES = (
     "CREATE INDEX IF NOT EXISTS idx_events_session ON events(session_id)",
@@ -217,6 +234,7 @@ class StateStore:
         for table, additions in (
             ("sessions", _SESSIONS_V1_1_COLUMNS),
             ("envelopes", _ENVELOPES_V1_1_COLUMNS),
+            ("outcomes", _OUTCOMES_V1_1_COLUMNS),
         ):
             cur = conn.execute(f"PRAGMA table_info({table})")
             existing = {row[1] for row in cur.fetchall()}
@@ -651,16 +669,30 @@ class StateStore:
         amplification_enabled: bool = True,
         quality_estimate: float | None = None,
         finalize_report: Mapping[str, Any] | None = None,
+        completed: bool | None = None,
+        quality_score: float | None = None,
+        convergence_state: str | None = None,
     ) -> None:
         """Write the per-turn outcome row.
 
         Called from Stop hook after computing summary metrics.
         Idempotent (INSERT OR REPLACE) — re-running the Stop hook for the
         same (session_id, turn_id) overwrites the prior write.
+
+        v1.1 layered metrics:
+            * ``completed`` — boolean mirror of ``converged`` semantics
+              (in_flight == 0). Renamed for clarity. If omitted, defaults
+              to the same value as ``converged`` for v1.0 caller compat.
+            * ``quality_score`` — bounded [0, 1] Jaccard similarity between
+              envelope goal text and Claude's final assistant message.
+              NULL if transcript unavailable.
+            * ``convergence_state`` — per-session trajectory enum value
+              (improving/stagnant/oscillating/converged). NULL allowed.
         """
         report_json = json.dumps(
             dict(finalize_report) if finalize_report else {}, default=str
         )
+        completed_flag = bool(converged) if completed is None else bool(completed)
         with self._connect() as conn:
             conn.execute(
                 """
@@ -668,8 +700,9 @@ class StateStore:
                     session_id, turn_id, iterations_completed, converged,
                     drift_at_end, tokens_used, duration_ms,
                     amplification_enabled, quality_estimate,
-                    finalize_report_json, written_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    finalize_report_json, written_at,
+                    completed, quality_score, convergence_state
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     session_id,
@@ -683,6 +716,9 @@ class StateStore:
                     quality_estimate,
                     report_json,
                     time.time(),
+                    1 if completed_flag else 0,
+                    quality_score,
+                    convergence_state,
                 ),
             )
             conn.commit()

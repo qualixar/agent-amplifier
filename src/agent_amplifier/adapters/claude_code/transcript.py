@@ -82,6 +82,75 @@ def _sum_usage(usage: object) -> int:
     return total
 
 
+_MAX_FINAL_MESSAGE_CHARS: Final[int] = 256_000
+
+
+def _extract_text_from_message_content(content: object) -> str:
+    """Pull plain-text from a Claude message ``content`` field.
+
+    Claude transcripts have ``content`` as either a plain string or a list
+    of ``{"type": "text", "text": "..."}`` blocks (also ``tool_use`` /
+    ``tool_result`` blocks which we ignore for quality scoring). Returns
+    the concatenated text of all ``text`` blocks.
+    """
+    if isinstance(content, str):
+        return content
+    if not isinstance(content, list):
+        return ""
+    parts: list[str] = []
+    for block in content:
+        if not isinstance(block, dict):
+            continue
+        if block.get("type") == "text":
+            text = block.get("text")
+            if isinstance(text, str):
+                parts.append(text)
+    return "\n".join(parts)
+
+
+def final_assistant_message(session_id: str, project_cwd: Path) -> str | None:
+    """Return the LAST assistant-message text from the JSONL transcript.
+
+    Walks the entire JSONL, keeps only ``type == "assistant"`` rows whose
+    ``message.content`` contains ``text`` blocks, and returns the last one
+    concatenated. Returns ``None`` if the transcript is missing, empty, or
+    has no text content. Caps the return at ``_MAX_FINAL_MESSAGE_CHARS`` to
+    bound downstream tokenization cost.
+
+    Fail-open by contract — Stop hook MUST NOT crash on transcript errors.
+    """
+    path = transcript_path(session_id, project_cwd)
+    if not path.is_file():
+        return None
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError as exc:
+        LOG.debug("transcript read failed for %s: %s", session_id, exc)
+        return None
+    last_text: str | None = None
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        try:
+            obj = json.loads(stripped)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(obj, dict) or obj.get("type") != "assistant":
+            continue
+        msg = obj.get("message")
+        if not isinstance(msg, dict):
+            continue
+        extracted = _extract_text_from_message_content(msg.get("content"))
+        if extracted:
+            last_text = extracted
+    if last_text is None or not last_text.strip():
+        return None
+    if len(last_text) > _MAX_FINAL_MESSAGE_CHARS:
+        return last_text[:_MAX_FINAL_MESSAGE_CHARS]
+    return last_text
+
+
 def tokens_for_session(session_id: str, project_cwd: Path) -> int:
     """Return the cumulative tokens used across all assistant messages.
 

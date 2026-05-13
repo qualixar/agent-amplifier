@@ -37,10 +37,16 @@ import shutil
 import sqlite3
 import sys
 import time
+from collections.abc import Mapping
+from pathlib import Path
 from typing import Any
 
+from agent_amplifier._internal.keyword_set import keyword_set
 from agent_amplifier._internal.redact import redact
 from agent_amplifier.adapters.claude_code.state import StateStore
+from agent_amplifier.adapters.claude_code.transcript import (
+    final_assistant_message,
+)
 
 LOG = logging.getLogger("agent_amplifier.adapters.claude_code.stop_hook")
 
@@ -122,6 +128,53 @@ def _compute_turn_tokens(
     except Exception:
         prior = 0
     return max(0, cumulative - prior)
+
+
+def _compute_quality_score_tier1(
+    *,
+    envelope: Mapping[str, Any],
+    session_id: str,
+    project_cwd: str,
+) -> float | None:
+    """F1A Tier 1 — Jaccard similarity between envelope goal text and the
+    last assistant message's text content from the Claude Code transcript.
+
+    Returns a value in ``[0, 1]`` when both sides yield a non-empty keyword
+    set; ``None`` when the transcript is missing, empty, or text-free
+    (e.g. tool-use-only turn).
+
+    Implementation re-uses ``agent_amplifier._internal.keyword_set`` — the
+    same extractor used by ``convergence.py``, so quality scoring shares
+    tokenization semantics with the convergence detector.
+
+    Fail-open: any exception → ``None``. The Stop hook MUST NOT fail
+    because quality scoring stumbled.
+    """
+    try:
+        goal_parts: list[str] = []
+        prompt = envelope.get("user_prompt_redacted")
+        if isinstance(prompt, str):
+            goal_parts.append(prompt)
+        env_text = envelope.get("envelope_text")
+        if isinstance(env_text, str):
+            goal_parts.append(env_text)
+        if not goal_parts:
+            return None
+        goal_text = " ".join(goal_parts)
+        final = final_assistant_message(session_id, Path(project_cwd))
+        if final is None:
+            return None
+        goal_kw = keyword_set(goal_text)
+        out_kw = keyword_set(final)
+        if not goal_kw or not out_kw:
+            return None
+        union = goal_kw | out_kw
+        if not union:  # pragma: no cover - guarded by truthiness above
+            return None
+        return len(goal_kw & out_kw) / len(union)
+    except Exception as exc:  # pragma: no cover - fail-open defense
+        LOG.warning("quality_score Tier1 failed (fail-open): %s", exc)
+        return None
 
 
 def _store() -> StateStore:
@@ -262,6 +315,18 @@ def _on_stop_impl() -> None:
     # Claude Code transcript JSONL instead of the v1.0 hardcoded 0.
     project_cwd = _resolve_cwd(event)
     tokens_used = _compute_turn_tokens(store, session_id, turn_id, project_cwd)
+
+    # v1.1 F1A: layered quality metric. Tier 1 (Jaccard) is always cheap and
+    # deterministic. Tier 2 (local embedding) and Tier 3 (trajectory delta)
+    # are wired in F1B / F1C commits — this commit lands the schema, the
+    # transcript reader, and the Tier 1 baseline so v1.1 dashboards can show
+    # a real ``quality_score`` from day 0 of the upgrade.
+    quality_score = _compute_quality_score_tier1(
+        envelope=last_envelope,
+        session_id=session_id,
+        project_cwd=project_cwd,
+    )
+
     store.write_outcome(
         session_id,
         turn_id,
@@ -275,6 +340,10 @@ def _on_stop_impl() -> None:
         duration_ms=duration_ms,
         amplification_enabled=True,
         quality_estimate=None,
+        # F1A new fields:
+        completed=converged,  # explicit mirror under the renamed column
+        quality_score=quality_score,
+        convergence_state=None,  # filled in F1C per-session pool
         finalize_report={
             "tool_calls": pre_count,
             "tool_results": post_count,
