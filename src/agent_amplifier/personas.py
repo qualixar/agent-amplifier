@@ -343,7 +343,33 @@ def compose_persona(
 
 
 # ---------------------------------------------------------------------------
-# 7. Public exports
+# 7. Single-turn persona composition (v1.1.1)
+# ---------------------------------------------------------------------------
+
+
+def compose_single_turn_personas() -> dict[str, str]:
+    """Return stage-wise persona role strings for the single-turn envelope.
+
+    Maps the four-level persona ladder onto the three XML stages of the
+    single-turn envelope used by single-iteration host adapters:
+
+    * ``"plan"`` -> :data:`LEVEL_0` (senior software engineer, generalist)
+    * ``"execute"`` -> :data:`LEVEL_2` (principal engineer + maintainer)
+    * ``"reflection"`` -> :data:`LEVEL_3` (distinguished + AI safety reviewer)
+
+    :data:`LEVEL_1` (security specialist) is reserved for a future
+    domain-aware composition; v1.1.1 keeps the mapping static so the
+    envelope stays deterministic.
+    """
+    return {
+        "plan": LEVEL_0.role,
+        "execute": LEVEL_2.role,
+        "reflection": LEVEL_3.role,
+    }
+
+
+# ---------------------------------------------------------------------------
+# 8. Public exports
 # ---------------------------------------------------------------------------
 
 __all__ = [
@@ -362,6 +388,7 @@ __all__ = [
     "PersonaConfig",
     "StrictnessProfile",
     "compose_persona",
+    "compose_single_turn_personas",
     "format_persona_prompt",
     "get_persona",
     "get_strictness_profile",

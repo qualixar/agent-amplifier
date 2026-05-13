@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "agent-amplifier"
-version = "1.1.0"
+version = "1.1.1"
 description = "Runtime amplification for AI agents. By Qualixar."
 readme = "README.md"
 requires-python = ">=3.11"

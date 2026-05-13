@@ -101,6 +101,7 @@ from agent_amplifier.model_router import ModelRouter
 from agent_amplifier.persona_docs import resolve_flavor
 from agent_amplifier.personas import (
     compose_persona,
+    compose_single_turn_personas,
     get_persona,
     get_strictness_profile,
 )
@@ -849,6 +850,21 @@ class _AmplifierCore:
             session_nonce=self._session_nonce,
         )
 
+        # ---- Step 7.5. Single-iteration host override (v1.1.1) ---------
+        # When the configured adapter runs hook-time with exactly one
+        # injection point per user turn (e.g. Claude Code's
+        # ``UserPromptSubmit``), replace the multi-iteration phase
+        # envelope with the structured single-turn envelope so the full
+        # amplification value lands inside one host turn instead of
+        # deferring to a follow-up iteration that never fires.
+        if (
+            self._adapter is not None
+            and getattr(self._adapter.__class__, "is_single_iteration", False)
+        ):
+            envelope = _build_single_turn_envelope(
+                query=query, complexity=classification.complexity
+            )
+
         # ---- Step 8. Tool recommendation (lock-free) -------------------
         available = ctx.get("available_tools") or []
         recommended_tools = (
@@ -1311,6 +1327,34 @@ def amplify(
     with AgentAmplifier(config) as amp:
         env = amp.before_step(query, {})
         return env.to_dict()
+
+
+def _build_single_turn_envelope(
+    *, query: str, complexity: EffortLevel
+) -> str:
+    """Build the v1.1.1 single-turn envelope for hook-time host adapters.
+
+    The complexity tier determines the dispatch path:
+
+    * ``MAX`` -> :func:`single_turn_envelope.build_subagent_envelope`
+      (instructs the model to dispatch a Task-tool subagent, with the
+      inline envelope passed verbatim as the subagent's prompt).
+    * All other tiers -> :func:`single_turn_envelope.build_inline_envelope`.
+
+    Personas are composed stage-wise (LEVEL_0 / LEVEL_2 / LEVEL_3) via
+    :func:`compose_single_turn_personas`.
+    """
+    # Lazy-import to keep the kernel module's import graph narrow.
+    from agent_amplifier.adapters.claude_code.single_turn_envelope import (
+        build_inline_envelope,
+        build_subagent_envelope,
+    )
+
+    personas = compose_single_turn_personas()
+    tier = complexity.value.upper()
+    if tier == "MAX":
+        return build_subagent_envelope(query=query, tier=tier, personas=personas)
+    return build_inline_envelope(query=query, tier=tier, personas=personas)
 
 
 __all__ = [

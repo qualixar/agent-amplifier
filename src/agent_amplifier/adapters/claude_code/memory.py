@@ -81,6 +81,13 @@ class ClaudeCodeAdapter(AdapterBase):
 
     version: ClassVar[str] = "1.0.0"
 
+    is_single_iteration: ClassVar[bool] = True
+    """Claude Code fires the ``UserPromptSubmit`` injection point exactly once
+    per user turn. The kernel routes this adapter through the structured
+    single-turn envelope (XML phase staging + adaptive thinking + optional
+    subagent dispatch for high-complexity tasks) so the full Agent Amplifier
+    value lands inside that single host turn."""
+
     INSTALL_PERSISTENT: ClassVar[bool] = True
     """day-0: flipped True. ``install()`` writes hook entries into
     ``~/.claude/settings.json``; the CLI prints "installed: claude_code"

@@ -93,6 +93,19 @@ class AdapterBase(ABC):
     framework_name: ClassVar[str] = ""
     version: ClassVar[str] = "0.0.0"
 
+    is_single_iteration: ClassVar[bool] = False
+    """Set ``True`` on adapters whose host fires the AA injection point
+    exactly once per user turn (e.g. Claude Code's ``UserPromptSubmit``
+    hook). The kernel routes single-iteration adapters through the
+    structured single-turn envelope instead of the multi-iteration
+    EXPLORE/EVALUATE/EXECUTE/VERIFY/REFINE loop, so the full amplification
+    value lands inside one host turn.
+
+    Adapters that drive multi-iteration loops externally (CrewAI,
+    LangGraph, AgentScope, LangChain) leave this False and use the
+    kernel's existing multi-iteration path.
+    """
+
     INSTALL_PERSISTENT: ClassVar[bool] = False
     """ — declare whether ``install()`` writes any persistent
     state.  File-based adapters (Claude Code, Cursor, GitHub Copilot) leave

@@ -302,7 +302,7 @@ class TestAdaptersTabErrors:
             if "adapters" in url:
                 response.json.return_value = {"adapters": []}
             elif "health" in url:
-                response.json.return_value = {"status": "ok", "amp_version": "1.1.0", "db_path": "/tmp/db"}
+                response.json.return_value = {"status": "ok", "amp_version": "1.1.1", "db_path": "/tmp/db"}
             else:
                 response.json.return_value = {}
             return response
@@ -326,7 +326,7 @@ class TestAdaptersTabErrors:
             if "adapters" in url:
                 raise DashboardError("adapters down")
             elif "health" in url:
-                response.json.return_value = {"status": "ok", "amp_version": "1.1.0", "db_path": "/tmp/db"}
+                response.json.return_value = {"status": "ok", "amp_version": "1.1.1", "db_path": "/tmp/db"}
             else:
                 response.json.return_value = {}
             return response

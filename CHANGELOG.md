@@ -4,6 +4,90 @@ All notable changes to **Agent Amplifier** are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.1] — 2026-05-14
+
+Improvement release for the Claude Code adapter. Lands Agent Amplifier's
+multi-stage amplification value inside a single Claude Code user turn via
+XML phase staging + adaptive thinking + subagent dispatch for the highest
+complexity tier. Restores Sonnet 4.6 + Agent Amplifier to parity with raw
+Sonnet 4.6 on the public 12-task agentic benchmark (mean 4.833 / 5.000
+respectively; AgentAssay Mann-Whitney effect size −0.0833 NEGLIGIBLE,
+p=0.18).
+
+### Added
+
+- **`AdapterBase.is_single_iteration`** — host-capability flag. Adapters
+  whose host fires the Agent Amplifier injection point once per user turn
+  set this to `True`; the kernel routes them through a new structured
+  single-turn envelope. Claude Code returns `True`. Kernel-driven adapters
+  (CrewAI / LangGraph / AgentScope / LangChain) keep `False` and use the
+  existing multi-iteration kernel path unchanged.
+- **`agent_amplifier.adapters.claude_code.single_turn_envelope`** — new
+  module with `build_inline_envelope` and `build_subagent_envelope`. The
+  inline builder produces an XML phase-staged envelope (`<plan>` /
+  `<execute>` / `<reflection>` / `<refine>` / `<final_answer>`) with
+  stage-wise persona escalation (LEVEL_0 generalist → LEVEL_2 principal
+  engineer → LEVEL_3 distinguished engineer + AI safety reviewer). The
+  subagent builder wraps the inline envelope in a Task-tool dispatch
+  directive for the MAX complexity tier and includes an explicit inline
+  fallback when the Task tool is unavailable.
+- **`personas.compose_single_turn_personas`** — maps the existing
+  four-level persona ladder onto the three XML stages of the single-turn
+  envelope so the same persona IP applies in either kernel-driven or
+  hook-time hosts.
+- **`agent_amplifier._internal.foundry_payload`** — Anthropic Messages
+  API payload builder verified against Azure Foundry. Uses
+  `thinking.type = "adaptive"` with `output_config.effort` (the canonical
+  2026 shape; legacy `thinking.budget_tokens` is rejected by Opus 4.7).
+  `temperature` is intentionally omitted (Opus 4.7 returns HTTP 400 if
+  it appears). Tier-to-effort mapping promotes `MAX` to `effort="max"`
+  only when the model is Opus 4.7.
+
+### Changed
+
+- **Claude Code adapter envelope.** Previous releases injected a
+  multi-iteration phase header with an explicit deferred-handoff marker.
+  This shape is appropriate for kernel-driven hosts that run the full
+  iteration loop externally, but on a single-injection-point host it left
+  the model expecting a follow-up turn that never fired. The new envelope
+  carries all five stages in one structured response with stage-wise
+  persona voices, no deferred handoff, and a hard-rule constraint that
+  the deliverable must appear in `<final_answer>`.
+- **Phase 4 benchmark harness** (`scripts/phase4_agentic_bench.py`) now
+  enables adaptive thinking on the Sonnet + Agent Amplifier arm, raises
+  the API timeout to 600 s to accommodate larger thinking budgets, and
+  wires `ClaudeCodeAdapter` into the amplifier so the bench exercises
+  the new single-turn envelope.
+
+### Verified
+
+- Hybrid 12-task A/B benchmark (6 from WildBench-Hard, paraphrased, with
+  attribution preserved; 6 custom Qualixar agentic seeds) × 3 arms
+  (raw Sonnet 4.6 / Sonnet 4.6 + Agent Amplifier envelope / raw Opus 4.7)
+  × Opus 4.7 as blind LLM-as-judge with a 5-point rubric.
+  AgentAssay `evaluate_quality_distributions` verdict (Mann-Whitney U):
+  Sonnet 4.6 + AA mean 4.833 vs raw Sonnet 4.6 mean 5.000, effect size
+  −0.0833 (negligible), p = 0.18, Wilson 95 % CI on synthetic pass-rate
+  `[0.65, 0.99]`. Sonnet + AA also ties raw Opus 4.7 (5.000) on the same
+  comparison. Benchmark corpus, raw results, and verdict report ship in
+  `.backup/revive-plan-2026-05-13/`.
+
+### Backward compatibility
+
+- Schema unchanged. All v1.0 / v1.1.0 `state.db` files load and migrate
+  cleanly.
+- Adapters that do not set `is_single_iteration = True` keep the exact
+  multi-iteration envelope behavior they had in v1.1.0.
+- `outcomes.converged` still written alongside `outcomes.completed` per
+  the v1.1 deprecation contract; removal targeted for v1.3.
+
+### Tests & quality
+
+- 1972 tests passing, 1 skipped (platform-specific).
+- 100 % line + 100 % branch coverage on every file touched.
+- `mypy --strict` clean (68 source files).
+- `ruff check` clean.
+
 ## [1.1.0] — 2026-05-13
 
 Engineering hardening release. Layered quality metric, AgentAssay verdict

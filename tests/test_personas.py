@@ -220,3 +220,38 @@ def test_level_1_role_mentions_payments_generically() -> None:
     """Specific  fix: LEVEL_1 used to say 'Stripe'; now generic."""
     assert "Stripe" not in LEVEL_1.role
     assert "payments" in LEVEL_1.role.lower()
+
+
+# ---------------------------------------------------------------------------
+# v1.1.1 — single-turn persona composition (single-iteration adapter path)
+# ---------------------------------------------------------------------------
+
+
+def test_compose_single_turn_personas_returns_three_stages() -> None:
+    from agent_amplifier.personas import compose_single_turn_personas
+
+    result = compose_single_turn_personas()
+    assert set(result) == {"plan", "execute", "reflection"}
+
+
+def test_compose_single_turn_personas_uses_existing_ladder() -> None:
+    from agent_amplifier.personas import (
+        LEVEL_0,
+        LEVEL_2,
+        LEVEL_3,
+        compose_single_turn_personas,
+    )
+
+    result = compose_single_turn_personas()
+    assert result["plan"] == LEVEL_0.role
+    assert result["execute"] == LEVEL_2.role
+    assert result["reflection"] == LEVEL_3.role
+
+
+def test_compose_single_turn_personas_values_are_non_empty_strings() -> None:
+    from agent_amplifier.personas import compose_single_turn_personas
+
+    result = compose_single_turn_personas()
+    for stage, role in result.items():
+        assert isinstance(role, str)
+        assert role.strip(), f"stage {stage} produced empty role string"

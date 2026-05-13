@@ -10,7 +10,7 @@ import pytest
 
 _CANNED_HEALTH: dict[str, Any] = {
     "status": "ok",
-    "amp_version": "1.1.0",
+    "amp_version": "1.1.1",
     "db_path": "/tmp/state.db",
 }
 

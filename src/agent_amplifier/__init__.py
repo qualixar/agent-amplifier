@@ -53,7 +53,7 @@ from agent_amplifier.types import (
     TaskClassification,
 )
 
-__version__ = "1.1.0"
+__version__ = "1.1.1"
 __author__ = "Qualixar"
 __license__ = "AGPL-3.0-or-later"
 __url__ = "https://qualixar.com"
