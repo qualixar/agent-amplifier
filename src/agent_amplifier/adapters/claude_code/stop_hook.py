@@ -185,6 +185,63 @@ _TRAJECTORY_DELTA_FLOOR: Final[float] = -0.25
 _MUTATION_TOOLS: Final[frozenset[str]] = frozenset({"Edit", "Write", "MultiEdit"})
 _READ_TOOL: Final[str] = "Read"
 
+# F1C convergence-state thresholds (per-session trajectory classifier).
+_CONVERGENCE_CONVERGED_THRESHOLD: Final[float] = 0.85
+_CONVERGENCE_STAGNANT_BAND: Final[float] = 0.05
+_CONVERGENCE_HISTORY_DEPTH: Final[int] = 3
+
+
+def _compute_convergence_state(
+    store: StateStore, session_id: str, current_quality_score: float | None
+) -> str | None:
+    """F1C — classify the per-session trajectory of quality_score.
+
+    Returns one of ``"improving" | "stagnant" | "oscillating" | "converged"``
+    or ``None`` when we lack a current score (cannot judge).
+
+    Algorithm (cheap, deterministic, no extra LLM calls):
+
+      * ``current is None`` → ``None``.
+      * ``current >= _CONVERGENCE_CONVERGED_THRESHOLD`` → ``"converged"``.
+      * Combine the prior up-to-``_CONVERGENCE_HISTORY_DEPTH`` non-NULL
+        quality scores with the current score and inspect adjacent deltas:
+          - ≥1 sign change among the deltas → ``"oscillating"``.
+          - All deltas have ``abs <= _CONVERGENCE_STAGNANT_BAND`` →
+            ``"stagnant"``.
+          - Otherwise → ``"improving"``.
+      * If history is empty (first turn of a session), default to
+        ``"improving"`` so the dashboard renders something sensible.
+
+    Fail-open: any exception returns ``None``.
+    """
+    if current_quality_score is None:
+        return None
+    try:
+        if current_quality_score >= _CONVERGENCE_CONVERGED_THRESHOLD:
+            return "converged"
+        history = store.recent_quality_scores_for_session(
+            session_id, limit=_CONVERGENCE_HISTORY_DEPTH
+        )
+        scores = [s for s in history if s is not None]
+        scores.append(current_quality_score)
+        if len(scores) < 2:
+            return "improving"
+        deltas = [scores[i + 1] - scores[i] for i in range(len(scores) - 1)]
+        # Oscillation: at least one sign change between consecutive deltas.
+        signs = [1 if d > 0 else (-1 if d < 0 else 0) for d in deltas]
+        if any(
+            signs[i] != 0 and signs[i + 1] != 0 and signs[i] != signs[i + 1]
+            for i in range(len(signs) - 1)
+        ):
+            return "oscillating"
+        # Stagnation: every delta within the stagnant band.
+        if all(abs(d) <= _CONVERGENCE_STAGNANT_BAND for d in deltas):
+            return "stagnant"
+        return "improving"
+    except Exception as exc:  # pragma: no cover - fail-open defense
+        LOG.warning("convergence_state classification failed: %s", exc)
+        return None
+
 
 def _extract_file_path(payload_json: str) -> str | None:
     """Pull a ``file_path`` value out of an event's redacted payload summary.
@@ -425,6 +482,12 @@ def _on_stop_impl() -> None:
         delta = _compute_trajectory_delta(store, session_id, turn_id)
         quality_score = max(0.0, min(1.0, tier1 + delta))
 
+    # F1C: classify the session-level trajectory BEFORE writing the current
+    # row (so history excludes the in-flight value).
+    convergence_state = _compute_convergence_state(
+        store, session_id, quality_score
+    )
+
     store.write_outcome(
         session_id,
         turn_id,
@@ -438,10 +501,10 @@ def _on_stop_impl() -> None:
         duration_ms=duration_ms,
         amplification_enabled=True,
         quality_estimate=None,
-        # F1A new fields:
+        # F1A + F1C new fields:
         completed=converged,  # explicit mirror under the renamed column
         quality_score=quality_score,
-        convergence_state=None,  # filled in F1C per-session pool
+        convergence_state=convergence_state,
         finalize_report={
             "tool_calls": pre_count,
             "tool_results": post_count,

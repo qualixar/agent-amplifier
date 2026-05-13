@@ -385,5 +385,6 @@ def test_on_stop_writes_real_quality_score_with_trajectory_delta(
     # penalty (Read-only with consistent paths), so quality_score > 0.
     assert row["quality_score"] is not None
     assert row["quality_score"] > 0.0
-    # convergence_state not yet wired (F1C)
-    assert row["convergence_state"] is None
+    # F1C: first turn of a session with a real quality_score defaults to
+    # "improving" (no prior history to classify against).
+    assert row["convergence_state"] == "improving"

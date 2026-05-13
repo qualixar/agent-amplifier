@@ -619,6 +619,31 @@ class StateStore:
             )
             conn.commit()
 
+    def recent_quality_scores_for_session(
+        self, session_id: str, *, limit: int = 5
+    ) -> list[float | None]:
+        """Return the last ``limit`` quality_score values for a session.
+
+        Ordered oldest→newest so trajectory analysis can iterate forward.
+        Rows with NULL quality_score are included as ``None``. Used by F1C
+        to classify the per-session convergence trajectory.
+        """
+        if limit < 1:
+            raise ValueError(f"limit must be >= 1, got {limit}")
+        with self._connect() as conn:
+            cur = conn.execute(
+                """
+                SELECT quality_score FROM outcomes
+                 WHERE session_id = ?
+                 ORDER BY turn_id DESC
+                 LIMIT ?
+                """,
+                (session_id, int(limit)),
+            )
+            rows = [r[0] for r in cur.fetchall()]
+        rows.reverse()  # oldest-first for trajectory walk
+        return rows
+
     def list_events_for_turn(
         self, session_id: str, turn_id: int
     ) -> list[dict[str, Any]]:
