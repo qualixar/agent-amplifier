@@ -21,6 +21,10 @@
 
 Agent Amplifier is a runtime amplification layer for AI coding agents. It installs as five Claude Code hooks and makes your agent reason harder, drift less, and stop when it is actually done -- using deterministic Python, no extra LLM calls, no network.
 
+[![Agent Amplifier v1.0 — 78-second demo](https://img.youtube.com/vi/arfkIS00eKg/maxresdefault.jpg)](https://www.youtube.com/watch?v=arfkIS00eKg)
+
+▶ **[Watch the 78-second demo on YouTube](https://www.youtube.com/watch?v=arfkIS00eKg)** — dashboard tour, persona picker, real telemetry from 1.71 billion tokens of dogfood sessions.
+
 [![PyPI](https://img.shields.io/pypi/v/agent-amplifier)](https://pypi.org/project/agent-amplifier/)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/python-3.10+-blue.svg)](https://python.org)
