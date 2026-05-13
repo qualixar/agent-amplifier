@@ -619,6 +619,28 @@ class StateStore:
             )
             conn.commit()
 
+    def list_events_for_turn(
+        self, session_id: str, turn_id: int
+    ) -> list[dict[str, Any]]:
+        """Return ordered list of event rows for a turn (oldest first).
+
+        Used by F1B's trajectory-delta computation in the Stop hook.
+        Each dict has keys ``event_type``, ``tool_name``, ``payload_json``,
+        ``timestamp``. Caller is responsible for parsing ``payload_json``.
+        """
+        with self._connect() as conn:
+            conn.row_factory = sqlite3.Row
+            cur = conn.execute(
+                """
+                SELECT event_type, tool_name, payload_json, timestamp
+                  FROM events
+                 WHERE session_id = ? AND turn_id = ?
+                 ORDER BY id ASC
+                """,
+                (session_id, int(turn_id)),
+            )
+            return [dict(r) for r in cur.fetchall()]
+
     def count_events(self, session_id: str, *, turn_id: int | None = None) -> int:
         with self._connect() as conn:
             if turn_id is None:

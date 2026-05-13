@@ -33,13 +33,14 @@ from __future__ import annotations
 import contextlib
 import json
 import logging
+import re
 import shutil
 import sqlite3
 import sys
 import time
 from collections.abc import Mapping
 from pathlib import Path
-from typing import Any
+from typing import Any, Final
 
 from agent_amplifier._internal.keyword_set import keyword_set
 from agent_amplifier._internal.redact import redact
@@ -175,6 +176,100 @@ def _compute_quality_score_tier1(
     except Exception as exc:  # pragma: no cover - fail-open defense
         LOG.warning("quality_score Tier1 failed (fail-open): %s", exc)
         return None
+
+
+_FILE_PATH_PATTERN = re.compile(r"file_path['\"]?\s*:\s*['\"]([^'\"]+)['\"]")
+_TRAJECTORY_LOOP_PENALTY: Final[float] = 0.10
+_TRAJECTORY_MISSING_RECON_PENALTY: Final[float] = 0.10
+_TRAJECTORY_DELTA_FLOOR: Final[float] = -0.25
+_MUTATION_TOOLS: Final[frozenset[str]] = frozenset({"Edit", "Write", "MultiEdit"})
+_READ_TOOL: Final[str] = "Read"
+
+
+def _extract_file_path(payload_json: str) -> str | None:
+    """Pull a ``file_path`` value out of an event's redacted payload summary.
+
+    The Claude Code hook stores payloads as ``str(tool_input)[:500]`` — a
+    repr-style string like ``{'file_path': '/a/b.py', 'limit': 50}``. We
+    regex-match the first occurrence rather than parsing JSON (the summary
+    is a Python repr, not valid JSON).
+    """
+    if not payload_json:
+        return None
+    try:
+        obj = json.loads(payload_json)
+    except (json.JSONDecodeError, TypeError):
+        return None
+    summary = obj.get("input_summary") if isinstance(obj, dict) else None
+    if not isinstance(summary, str):
+        return None
+    m = _FILE_PATH_PATTERN.search(summary)
+    return m.group(1) if m else None
+
+
+def _compute_trajectory_delta(
+    store: StateStore, session_id: str, turn_id: int
+) -> float:
+    """F1B Tier 3 — deterministic trajectory penalties from event sequence.
+
+    Two penalties, each capped at ``_TRAJECTORY_*_PENALTY``:
+
+      * **Loop:** three or more consecutive PreToolUse events with the same
+        ``(tool_name, payload_json)`` tuple. Signals the agent thrashing
+        rather than progressing.
+      * **Missing reconnaissance:** ``Edit`` / ``Write`` / ``MultiEdit`` on
+        a ``file_path`` that was never read via ``Read`` earlier in the
+        same turn. Signals a mutation without information gathering.
+
+    Returns a non-positive float in ``[_TRAJECTORY_DELTA_FLOOR, 0]``. The
+    Stop hook adds this to ``quality_score`` then clamps to ``[0, 1]``.
+
+    Fail-open: any exception returns 0.0 (no penalty) — better to over-score
+    a turn than to crash the Stop hook.
+    """
+    try:
+        events = store.list_events_for_turn(session_id, turn_id)
+    except Exception as exc:  # pragma: no cover - fail-open defense
+        LOG.warning("trajectory delta read failed (fail-open): %s", exc)
+        return 0.0
+
+    pre_events = [e for e in events if e.get("event_type") == "PreToolUse"]
+    delta = 0.0
+
+    # Loop penalty
+    streak_key: tuple[str, str] | None = None
+    streak = 0
+    loop_applied = False
+    for e in pre_events:
+        key = (str(e.get("tool_name") or ""), str(e.get("payload_json") or ""))
+        if key == streak_key:
+            streak += 1
+        else:
+            streak_key = key
+            streak = 1
+        if streak >= 3 and not loop_applied:
+            delta -= _TRAJECTORY_LOOP_PENALTY
+            loop_applied = True
+            break
+
+    # Missing-recon penalty
+    read_paths: set[str] = set()
+    recon_applied = False
+    for e in pre_events:
+        tool = str(e.get("tool_name") or "")
+        path = _extract_file_path(str(e.get("payload_json") or ""))
+        if path is None:
+            continue
+        if tool == _READ_TOOL:
+            read_paths.add(path)
+            continue
+        if tool in _MUTATION_TOOLS and path not in read_paths and not recon_applied:
+            delta -= _TRAJECTORY_MISSING_RECON_PENALTY
+            recon_applied = True
+            # do not break — keep scanning so a subsequent Read still
+            # registers (defense against multi-mutation turns)
+
+    return max(_TRAJECTORY_DELTA_FLOOR, delta)
 
 
 def _store() -> StateStore:
@@ -316,16 +411,19 @@ def _on_stop_impl() -> None:
     project_cwd = _resolve_cwd(event)
     tokens_used = _compute_turn_tokens(store, session_id, turn_id, project_cwd)
 
-    # v1.1 F1A: layered quality metric. Tier 1 (Jaccard) is always cheap and
-    # deterministic. Tier 2 (local embedding) and Tier 3 (trajectory delta)
-    # are wired in F1B / F1C commits — this commit lands the schema, the
-    # transcript reader, and the Tier 1 baseline so v1.1 dashboards can show
-    # a real ``quality_score`` from day 0 of the upgrade.
-    quality_score = _compute_quality_score_tier1(
+    # v1.1 F1A + F1B: layered quality metric.
+    # Tier 1 (Jaccard) + Tier 3 (trajectory delta) are deterministic and
+    # always run. Tier 2 (local embedding) wired in F1D.
+    tier1 = _compute_quality_score_tier1(
         envelope=last_envelope,
         session_id=session_id,
         project_cwd=project_cwd,
     )
+    if tier1 is None:
+        quality_score: float | None = None
+    else:
+        delta = _compute_trajectory_delta(store, session_id, turn_id)
+        quality_score = max(0.0, min(1.0, tier1 + delta))
 
     store.write_outcome(
         session_id,
