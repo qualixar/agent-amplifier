@@ -29,6 +29,7 @@ from __future__ import annotations
 import contextlib
 import json
 import logging
+import os
 import sqlite3
 import time
 from collections.abc import Iterator, Mapping
@@ -66,9 +67,31 @@ CREATE TABLE IF NOT EXISTS sessions (
     turn_count INTEGER NOT NULL DEFAULT 0,
     amplification_enabled INTEGER NOT NULL DEFAULT 1,
     config_json TEXT NOT NULL DEFAULT '{}',
-    closed_at REAL
+    closed_at REAL,
+    is_synthetic INTEGER NOT NULL DEFAULT 0
 )
 """
+
+# v1.1 column adds for sessions. Migration runs idempotently on every open.
+# Each tuple: (column_name, DDL fragment for ADD COLUMN).
+_SESSIONS_V1_1_COLUMNS: Final[tuple[tuple[str, str], ...]] = (
+    ("is_synthetic", "INTEGER NOT NULL DEFAULT 0"),
+)
+
+
+def _is_synthetic_auto(cwd: str | None) -> bool:
+    """Heuristic — synthetic if either:
+
+    * env ``AGENT_AMP_SYNTHETIC == '1'`` (deterministic; opt-in by callers
+      such as ``agent-amp demo`` or CI benchmark runners), OR
+    * ``cwd`` is non-empty and does not resolve on disk (catches ephemeral
+      fixture paths like ``/proj`` used by load-tests).
+
+    Anything else returns ``False`` — real users with real cwds are real.
+    """
+    if os.environ.get("AGENT_AMP_SYNTHETIC") == "1":
+        return True
+    return bool(cwd and not Path(cwd).exists())
 
 _SCHEMA_ENVELOPES = """
 CREATE TABLE IF NOT EXISTS envelopes (
@@ -174,7 +197,24 @@ class StateStore:
             conn.execute(_SCHEMA_OUTCOMES)
             for ddl in _SCHEMA_INDEXES:
                 conn.execute(ddl)
+            self._migrate(conn)
             conn.commit()
+
+    def _migrate(self, conn: sqlite3.Connection) -> None:
+        """Apply additive, idempotent column migrations for v1.1+.
+
+        Each migration is a single ``ALTER TABLE ADD COLUMN`` guarded by a
+        ``PRAGMA table_info`` check so re-running is a no-op. Per
+        ``state.py`` back-compat discipline (Apache-2.0 product), columns
+        are never dropped or renamed — only added.
+        """
+        cur = conn.execute("PRAGMA table_info(sessions)")
+        existing = {row[1] for row in cur.fetchall()}
+        for col_name, ddl in _SESSIONS_V1_1_COLUMNS:
+            if col_name not in existing:
+                conn.execute(
+                    f"ALTER TABLE sessions ADD COLUMN {col_name} {ddl}"
+                )
 
     @contextlib.contextmanager
     def _connect(self) -> Iterator[sqlite3.Connection]:
@@ -201,15 +241,29 @@ class StateStore:
         model_provider: str | None = None,
         amplification_enabled: bool = True,
         config: Mapping[str, Any] | None = None,
+        is_synthetic: bool | None = None,
     ) -> None:
         """Create-or-touch a session row.
 
         Idempotent. Updates ``last_seen_at`` on every call. Preserves
         ``started_at`` if the row already exists. Does NOT clobber model
         / config if a NULL is passed and the row already has a value.
+
+        ``is_synthetic`` is only set on INSERT, never on UPDATE — so a
+        repeat upsert without the env var cannot demote a previously-tagged
+        synthetic row back to real. To flip an existing row, callers must
+        pass ``is_synthetic=...`` explicitly; that branch lives in a
+        separate explicit setter to keep this method's contract narrow.
+
+        When ``is_synthetic`` is ``None`` the value is auto-detected via
+        :func:`_is_synthetic_auto` on the cwd + env. When passed explicitly
+        the override wins.
         """
         if not session_id:
             raise ValueError("session_id must be non-empty")
+        synthetic_flag = (
+            _is_synthetic_auto(cwd) if is_synthetic is None else bool(is_synthetic)
+        )
         now = time.time()
         cfg_json = json.dumps(dict(config) if config else {}, default=str)
         with self._connect() as conn:
@@ -219,34 +273,61 @@ class StateStore:
             exists = cur.fetchone() is not None
             if exists:
                 # Update last_seen and (only if non-null) the optional fields.
-                conn.execute(
-                    """
-                    UPDATE sessions
-                       SET last_seen_at = ?,
-                           model = COALESCE(?, model),
-                           model_provider = COALESCE(?, model_provider),
-                           amplification_enabled = ?,
-                           config_json = CASE WHEN ? = '{}' THEN config_json ELSE ? END
-                     WHERE session_id = ?
-                    """,
-                    (
-                        now,
-                        model,
-                        model_provider,
-                        1 if amplification_enabled else 0,
-                        cfg_json,
-                        cfg_json,
-                        session_id,
-                    ),
-                )
+                # ``is_synthetic`` is only honored on INSERT path; on update,
+                # an explicit override applies but auto-detect does not
+                # downgrade an already-flagged row.
+                if is_synthetic is not None:
+                    conn.execute(
+                        """
+                        UPDATE sessions
+                           SET last_seen_at = ?,
+                               model = COALESCE(?, model),
+                               model_provider = COALESCE(?, model_provider),
+                               amplification_enabled = ?,
+                               config_json = CASE WHEN ? = '{}' THEN config_json ELSE ? END,
+                               is_synthetic = ?
+                         WHERE session_id = ?
+                        """,
+                        (
+                            now,
+                            model,
+                            model_provider,
+                            1 if amplification_enabled else 0,
+                            cfg_json,
+                            cfg_json,
+                            1 if synthetic_flag else 0,
+                            session_id,
+                        ),
+                    )
+                else:
+                    conn.execute(
+                        """
+                        UPDATE sessions
+                           SET last_seen_at = ?,
+                               model = COALESCE(?, model),
+                               model_provider = COALESCE(?, model_provider),
+                               amplification_enabled = ?,
+                               config_json = CASE WHEN ? = '{}' THEN config_json ELSE ? END
+                         WHERE session_id = ?
+                        """,
+                        (
+                            now,
+                            model,
+                            model_provider,
+                            1 if amplification_enabled else 0,
+                            cfg_json,
+                            cfg_json,
+                            session_id,
+                        ),
+                    )
             else:
                 conn.execute(
                     """
                     INSERT INTO sessions (
                         session_id, cwd, model, model_provider,
                         started_at, last_seen_at, turn_count,
-                        amplification_enabled, config_json
-                    ) VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?)
+                        amplification_enabled, config_json, is_synthetic
+                    ) VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?, ?)
                     """,
                     (
                         session_id,
@@ -257,9 +338,39 @@ class StateStore:
                         now,
                         1 if amplification_enabled else 0,
                         cfg_json,
+                        1 if synthetic_flag else 0,
                     ),
                 )
             conn.commit()
+
+    def list_sessions(
+        self,
+        *,
+        include_synthetic: bool = False,
+        synthetic_only: bool = False,
+    ) -> list[dict[str, Any]]:
+        """Return session rows for dashboard/report consumption.
+
+        Default behavior excludes synthetic rows so the real-usage view is
+        clean by construction. The two flags are mutually exclusive — pass
+        one or neither.
+        """
+        if include_synthetic and synthetic_only:
+            raise ValueError(
+                "include_synthetic and synthetic_only are mutually exclusive"
+            )
+        if synthetic_only:
+            where = "WHERE is_synthetic = 1"
+        elif include_synthetic:
+            where = ""
+        else:
+            where = "WHERE is_synthetic = 0"
+        with self._connect() as conn:
+            conn.row_factory = sqlite3.Row
+            cur = conn.execute(
+                f"SELECT * FROM sessions {where} ORDER BY last_seen_at DESC"
+            )
+            return [dict(r) for r in cur.fetchall()]
 
     def close_session(self, session_id: str) -> None:
         """Mark a session closed (called from Stop hook)."""
