@@ -28,7 +28,7 @@ jobs:
       matrix:
         language: [python]
     steps:
-      - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11  # v4.1.1
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6.0.3
       - uses: github/codeql-action/init@b611370bb5703a7efb587f9d136a52ea24c5c38c  # v3.25.11
         with:
           languages: ${{ matrix.language }}

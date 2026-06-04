@@ -19,7 +19,7 @@ jobs:
   review:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11  # v4.1.1
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6.0.3
       - uses: actions/dependency-review-action@72eb03d02c7872a771aacd928f3123ac62ad6d3a  # v4.3.3
         with:
           fail-on-severity: high
