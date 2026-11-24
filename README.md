@@ -26,7 +26,7 @@ Agent Amplifier is a runtime amplification layer for AI coding agents. It instal
 ▶ **[Watch the 78-second demo on YouTube](https://www.youtube.com/watch?v=arfkIS00eKg)** — dashboard tour, persona picker, real telemetry from 1.71 billion tokens of dogfood sessions.
 
 [![PyPI](https://img.shields.io/pypi/v/agent-amplifier)](https://pypi.org/project/agent-amplifier/)
-[![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
+[![License](https://img.shields.io/badge/license-AGPL--3.0--or--later-blue.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/python-3.10+-blue.svg)](https://python.org)
 [![Coverage](https://img.shields.io/badge/coverage-100%25-brightgreen.svg)]()
 
